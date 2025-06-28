@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard Admin</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+<div class="container">
+    <h1>🎬 Dashboard</h1>
+    <p><strong>Bem-vindo:</strong> {{ session['usuario'] }}</p>
+    <p><a href="/usuarios">👥 Gerenciar Usuários</a> | <a href="/logout">Sair</a></p>
+
+    <hr>
+
+    <h2>📊 Estatísticas</h2>
+    <ul>
+        <li><strong>Filmes:</strong> {{ qtd_filmes }}</li>
+        <li><strong>Séries:</strong> {{ qtd_series }}</li>
+        <li><strong>Episódios:</strong> {{ qtd_episodios }}</li>
+    </ul>
+
+    <hr>
+
+    {% if not tmdb_key %}
+<h2>🔑 Chave da API do TMDb</h2>
+<form method="post">
+    <input type="text" name="tmdb_key" placeholder="Sua API Key" required>
+    <button type="submit">Salvar Key</button>
+</form>
+{% else %}
+<p>✅ API Key salva.</p>
+<p><a href="/add_conteudo">➕ Adicionar filme</a></p>
+<p><a href="/add_temporadas">➕ Adicionar temporadas e episódios</a></p>  <!-- Novo link para temporadas/episódios -->
+{% endif %}
+
+
+</div>
+</body>
+</html>

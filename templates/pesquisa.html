@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8" />
+    <title>Pesquisar Conteúdo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        input[type=text], select { padding: 10px; font-size: 16px; }
+        button { padding: 10px 20px; font-size: 16px; margin-left: 10px; }
+        .conteudo { margin: 10px 0; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
+        .conteudo h3 { margin: 0; }
+        .conteudo small { color: #666; }
+        .btn-add { margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <h1>🔎 Pesquisar Conteúdo</h1>
+    <a href="/dashboard">⬅ Voltar</a>
+
+    <form id="formBusca">
+        <select id="tipo" name="tipo" required>
+            <option value="filme">Filme</option>
+            <option value="serie">Série</option>
+        </select>
+        <input type="text" id="query" name="query" placeholder="Digite o nome..." required />
+        <button type="submit">Buscar</button>
+    </form>
+
+    <div id="resultados"></div>
+
+    <script>
+        const form = document.getElementById('formBusca');
+        const resultados = document.getElementById('resultados');
+
+        form.addEventListener('submit', async e => {
+            e.preventDefault();
+            resultados.innerHTML = 'Buscando...';
+
+            const query = document.getElementById('query').value;
+            const tipo = document.getElementById('tipo').value;
+
+            const response = await fetch('/pesquisar_conteudo', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: new URLSearchParams({query, tipo})
+            });
+
+            if (!response.ok) {
+                resultados.innerHTML = 'Erro ao buscar conteúdo.';
+                return;
+            }
+
+            const data = await response.json();
+
+            if (!data.results || data.results.length === 0) {
+                resultados.innerHTML = 'Nenhum conteúdo encontrado.';
+                return;
+            }
+
+            resultados.innerHTML = '';
+
+            data.results.forEach(item => {
+                // Pode ser filme ou série
+                const titulo = item.title || item.name || 'Sem título';
+                const ano = (item.release_date || item.first_air_date || '').slice(0, 4) || 'N/A';
+
+                const div = document.createElement('div');
+                div.classList.add('conteudo');
+                div.innerHTML = `
+                    <h3>${titulo}</h3>
+                    <small>Ano: ${ano}</small><br>
+                    <button class="btn-add"
+                        data-titulo="${titulo}"
+                        data-ano="${ano}"
+                        data-tipo="${tipo}"
+                        data-tmdbid="${item.id}">
+                        Adicionar
+                    </button>
+                `;
+                resultados.appendChild(div);
+            });
+
+            // Botões adicionar
+            document.querySelectorAll('.btn-add').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const titulo = btn.getAttribute('data-titulo');
+                    const ano = btn.getAttribute('data-ano');
+                    const tipo = btn.getAttribute('data-tipo');
+                    const tmdb_id = btn.getAttribute('data-tmdbid');
+
+                    fetch('/salvar_conteudo', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                        body: new URLSearchParams({titulo, ano, tipo, tmdb_id})
+                    }).then(() => {
+                        alert(`${tipo === 'filme' ? 'Filme' : 'Série'} "${titulo}" adicionado!`);
+                        window.location.href = '/dashboard';
+                    });
+                });
+            });
+        });
+    </script>
+</body>
+</html>

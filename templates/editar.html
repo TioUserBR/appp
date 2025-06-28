@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Editar Conteúdo</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="container">
+    <h1>✏️ Editar Conteúdo</h1>
+    <form method="post">
+        <input type="text" name="titulo" value="{{ conteudo[1] }}" required>
+        <input type="number" name="ano" value="{{ conteudo[2] }}" required>
+        <select name="tipo" required>
+            <option value="filme" {% if conteudo[3] == 'filme' %}selected{% endif %}>Filme</option>
+            <option value="serie" {% if conteudo[3] == 'serie' %}selected{% endif %}>Série</option>
+            <option value="episodio" {% if conteudo[3] == 'episodio' %}selected{% endif %}>Episódio</option>
+        </select>
+        <button type="submit">Salvar Alterações</button>
+    </form>
+</div>
+</body>
+</html>

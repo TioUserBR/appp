@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8" />
+    <title>Adicionar Temporadas e Episódios</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+</head>
+<body>
+    <h1>Adicionar Temporadas e Episódios</h1>
+    <a href="/dashboard">⬅ Voltar</a>
+
+    <form method="POST">
+        <label for="serie">Escolha a Série:</label>
+        <select name="serie_id" id="serie" required>
+            <option value="">Selecione</option>
+            {% for s in series %}
+                <option value="{{ s[0] }}">{{ s[1] }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit">Buscar e Adicionar</button>
+    </form>
+</body>
+</html>

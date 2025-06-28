@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Gerenciar Usuários</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+<div class="container">
+    <h1>👥 Administradores</h1>
+    <a href="/dashboard">⬅ Voltar</a> | <a href="/logout">Sair</a>
+
+    {% if erro %}
+        <p style="color:red;">{{ erro }}</p>
+    {% endif %}
+
+    <h2>➕ Criar novo admin</h2>
+    <form method="post">
+        <input type="hidden" name="acao" value="criar">
+        <input type="text" name="novo_usuario" placeholder="Novo usuário" required>
+        <input type="password" name="nova_senha" placeholder="Senha" required>
+        <button type="submit">Criar</button>
+    </form>
+
+    <h2>🔑 Alterar senha</h2>
+    <form method="post">
+        <input type="hidden" name="acao" value="alterar">
+        <select name="alvo_usuario">
+            {% for u in usuarios %}
+                <option value="{{ u }}">{{ u }}</option>
+            {% endfor %}
+        </select>
+        <input type="password" name="nova_senha" placeholder="Nova senha" required>
+        <button type="submit">Alterar</button>
+    </form>
+
+    <h2>🗑 Remover administrador</h2>
+    <form method="post">
+        <input type="hidden" name="acao" value="remover">
+        <select name="alvo_usuario">
+            {% for u in usuarios %}
+                {% if u != atual %}
+                    <option value="{{ u }}">{{ u }}</option>
+                {% endif %}
+            {% endfor %}
+        </select>
+        <button type="submit" style="background: crimson;">Remover</button>
+    </form>
+</div>
+</body>
+</html>
