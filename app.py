@@ -2,14 +2,14 @@ import json
 import os
 import sqlite3
 import hashlib
-from flask import Flask, render_template, request, redirect, session, jsonify, send_file
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, send_file
 import requests
 from io import BytesIO
 
 app = Flask(__name__)
-app.secret_key = 'uma-chave-secreta-muito-segura'  # Troque para algo forte em produção
+app.secret_key = 'flavin'  # Troque por algo mais seguro
 
-# Inicializa banco de dados e cria tabelas se não existirem
+# Inicializa banco de dados
 def init_db():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
@@ -60,7 +60,6 @@ def init_db():
         )
     ''')
 
-    # Cria admin padrão se não existir
     senha_hash = hashlib.sha256('admin123'.encode()).hexdigest()
     c.execute("SELECT * FROM usuarios WHERE usuario = 'admin'")
     if not c.fetchone():
@@ -69,10 +68,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Chama a função para garantir que o banco e tabelas existam
-init_db()
-
-# Config do arquivo para salvar API key do TMDb
+# Caminho para salvar a API KEY
 CONFIG_FILE = 'config.json'
 
 def salvar_tmdb_key(key):
@@ -87,7 +83,7 @@ def carregar_tmdb_key():
             return config.get('tmdb_api_key')
     return ""
 
-# Decorador para rotas protegidas (login)
+# Verifica se está logado
 def login_required(func):
     def wrapper(*args, **kwargs):
         if 'usuario' not in session:
@@ -96,7 +92,6 @@ def login_required(func):
     wrapper.__name__ = func.__name__
     return wrapper
 
-# Rota para obter imagens do TMDb
 @app.route('/img/<path:poster_path>')
 def obter_imagem_tmdb(poster_path):
     url = f'https://image.tmdb.org/t/p/w500/{poster_path}'
@@ -105,14 +100,12 @@ def obter_imagem_tmdb(poster_path):
         return send_file(BytesIO(response.content), mimetype='image/jpeg')
     return "Imagem não encontrada", 404
 
-# Página inicial
 @app.route('/')
 def home():
     if 'usuario' in session:
         return redirect('/dashboard')
     return redirect('/login')
 
-# Login
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if 'usuario' in session:
@@ -138,39 +131,38 @@ def login():
 
     return render_template('login.html', erro=erro)
 
-# Logout
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect('/login')
 
-# Dashboard principal
 @app.route('/dashboard', methods=['GET', 'POST'])
 @login_required
 def dashboard():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
 
+    # Estatísticas
     c.execute("SELECT COUNT(*) FROM conteudos WHERE tipo='filme'")
     qtd_filmes = c.fetchone()[0]
 
     c.execute("SELECT COUNT(*) FROM conteudos WHERE tipo='serie'")
     qtd_series = c.fetchone()[0]
 
+    # Salvar TMDb Key
     if request.method == 'POST' and 'tmdb_key' in request.form:
         key = request.form['tmdb_key']
         salvar_tmdb_key(key)
         return redirect('/dashboard')
 
     tmdb_key = carregar_tmdb_key()
-    conn.close()
 
+    conn.close()
     return render_template('dashboard.html',
                            qtd_filmes=qtd_filmes,
                            qtd_series=qtd_series,
                            tmdb_key=tmdb_key)
 
-# Gerenciar usuários
 @app.route('/usuarios', methods=['GET', 'POST'])
 @login_required
 def usuarios():
@@ -197,7 +189,7 @@ def usuarios():
 
         elif acao == 'remover':
             usuario = request.form.get('alvo_usuario')
-            if usuario != session['usuario']:
+            if usuario != session['usuario']:  # Não permite excluir o próprio logado
                 c.execute("DELETE FROM usuarios WHERE usuario=?", (usuario,))
                 conn.commit()
 
@@ -206,7 +198,6 @@ def usuarios():
     conn.close()
     return render_template('usuarios.html', usuarios=lista_usuarios, atual=session['usuario'])
 
-# Página para adicionar filmes ou séries (pesquisa TMDb)
 @app.route('/add_conteudo')
 @login_required
 def add_conteudo():
@@ -215,7 +206,6 @@ def add_conteudo():
         return redirect('/dashboard')
     return render_template('pesquisa.html')
 
-# Pesquisa TMDb (filmes ou séries)
 @app.route('/pesquisar_conteudo', methods=['POST'])
 @login_required
 def pesquisar_conteudo():
@@ -231,7 +221,10 @@ def pesquisar_conteudo():
         return {"error": "Tipo inválido"}, 400
 
     url_base = "https://api.themoviedb.org/3/search/"
-    url = f"{url_base}movie" if tipo == 'filme' else f"{url_base}tv"
+    if tipo == 'filme':
+        url = f"{url_base}movie"
+    else:
+        url = f"{url_base}tv"
 
     params = {
         "api_key": tmdb_key,
@@ -242,9 +235,9 @@ def pesquisar_conteudo():
     }
     response = requests.get(url, params=params)
     data = response.json()
-    return data
 
-# Salvar filme ou série no banco local
+    return data  # retorna JSON para o front (ajax)
+
 @app.route('/salvar_conteudo', methods=['POST'])
 @login_required
 def salvar_conteudo():
@@ -263,7 +256,10 @@ def salvar_conteudo():
         return {"erro": "ID TMDb ausente"}, 400
 
     url_base = "https://api.themoviedb.org/3"
-    url = f"{url_base}/movie/{tmdb_id}" if tipo == 'filme' else f"{url_base}/tv/{tmdb_id}"
+    if tipo == 'filme':
+        url = f"{url_base}/movie/{tmdb_id}"
+    else:
+        url = f"{url_base}/tv/{tmdb_id}"
 
     params = {
         "api_key": tmdb_key,
@@ -280,7 +276,9 @@ def salvar_conteudo():
     banner = dados.get('backdrop_path') or dados.get('poster_path') or ''
     banner_url = f"/img{banner}" if banner else ''
 
-    temporadas = dados.get('number_of_seasons', 0) if tipo == 'serie' else 0
+    temporadas = None
+    if tipo == 'serie':
+        temporadas = dados.get('number_of_seasons', 0)
 
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
@@ -301,7 +299,6 @@ def salvar_conteudo():
 
     return redirect('/dashboard')
 
-# API para filmes
 @app.route('/api/filmes', methods=['GET'])
 @login_required
 def api_filmes():
@@ -348,7 +345,6 @@ def api_filmes():
         "proxima_pagina": f"/api/filmes?page={next_page}" if next_page else None
     })
 
-# API para séries
 @app.route('/api/series', methods=['GET'])
 @login_required
 def api_series():
@@ -359,9 +355,11 @@ def api_series():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
 
+    # Total de séries
     c.execute("SELECT COUNT(*) FROM conteudos WHERE tipo='serie'")
     total = c.fetchone()[0]
 
+    # Buscar séries com todos os campos necessários
     c.execute('''
         SELECT id, titulo, banner, genero, sinopse, ano, temporadas
         FROM conteudos
@@ -381,7 +379,7 @@ def api_series():
             "genero": s[3],
             "sinopse": s[4],
             "ano": s[5],
-            "temporadas": s[6] or 0
+            "temporadas": s[6] if s[6] else 0
         })
 
     total_pages = (total + limit - 1) // limit
@@ -395,7 +393,6 @@ def api_series():
         "proxima_pagina": f"/api/series?page={next_page}" if next_page else None
     })
 
-# Rota para adicionar temporadas e episódios
 @app.route('/add_temporadas', methods=['GET', 'POST'])
 @login_required
 def add_temporadas():
@@ -407,6 +404,7 @@ def add_temporadas():
         serie_id = request.form.get('serie_id')
         tmdb_key = carregar_tmdb_key()
 
+        # Buscar título
         c.execute("SELECT titulo FROM conteudos WHERE id=? AND tipo='serie'", (serie_id,))
         row = c.fetchone()
         if not row:
@@ -415,6 +413,7 @@ def add_temporadas():
 
         titulo = row[0]
 
+        # Buscar ID do TMDb
         url_busca = "https://api.themoviedb.org/3/search/tv"
         params = {"api_key": tmdb_key, "language": "pt-BR", "query": titulo}
         r = requests.get(url_busca, params=params).json()
@@ -425,6 +424,7 @@ def add_temporadas():
 
         tmdb_id = resultados[0]["id"]
 
+        # Buscar número de temporadas
         detalhes = requests.get(
             f"https://api.themoviedb.org/3/tv/{tmdb_id}",
             params={"api_key": tmdb_key, "language": "pt-BR"}
@@ -437,6 +437,7 @@ def add_temporadas():
                 c.execute("INSERT INTO temporadas (serie_id, numero) VALUES (?, ?)", (serie_id, temporada))
                 temporada_id = c.lastrowid
 
+                # Buscar episódios
                 eps = requests.get(
                     f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{temporada}",
                     params={"api_key": tmdb_key, "language": "pt-BR"}
@@ -463,18 +464,19 @@ def add_temporadas():
         conn.close()
         return redirect('/dashboard')
 
+    # Listar séries
     c.execute("SELECT id, titulo FROM conteudos WHERE tipo='serie'")
     series = c.fetchall()
     conn.close()
     return render_template('add_temporadas.html', series=series)
 
-# API detalhada da série com temporadas e episódios
 @app.route('/api/serie/<int:serie_id>', methods=['GET'])
 @login_required
 def api_serie_detalhada(serie_id):
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
 
+    # Busca os dados da série
     c.execute('''
         SELECT id, titulo, banner, genero, sinopse, ano, temporadas
         FROM conteudos
@@ -496,14 +498,17 @@ def api_serie_detalhada(serie_id):
         "temporadas": []
     }
 
+    # Busca todas as temporadas da série
     c.execute("SELECT id, numero FROM temporadas WHERE serie_id = ? ORDER BY numero ASC", (serie_id,))
     temporadas = c.fetchall()
 
     for temp in temporadas:
-        temporada_id, numero_temp = temp
+        temporada_id = temp[0]
+        numero_temp = temp[1]
 
+        # Busca episódios da temporada
         c.execute("""
-            SELECT numero, nome, sinopse, capa
+            SELECT numero, nome, sinopse 
             FROM episodios 
             WHERE temporada_id = ? 
             ORDER BY numero ASC
@@ -513,21 +518,19 @@ def api_serie_detalhada(serie_id):
         episodios_list = []
         for ep in episodios:
             episodios_list.append({
-                "episodio_numero": ep[0],
+                "Episodios": ep[0],
                 "nome": ep[1],
-                "sinopse": ep[2],
-                "capa": f"/img_eps/{ep[3]}" if ep[3] else None
+                "sinopse": ep[2]
             })
 
         serie_info["temporadas"].append({
-            "temporada_numero": numero_temp,
+            "Temporada": numero_temp,
             "episodios": episodios_list
         })
 
     conn.close()
     return jsonify(serie_info)
-
-# Rota para imagens dos episódios
+ 
 @app.route('/img_eps/<path:still_path>')
 def imagem_episodio(still_path):
     url = f'https://image.tmdb.org/t/p/w500/{still_path}'
@@ -535,7 +538,8 @@ def imagem_episodio(still_path):
     if response.status_code == 200:
         return send_file(BytesIO(response.content), mimetype='image/jpeg')
     return "Imagem não encontrada", 404
-
-# Rodar com Gunicorn, não usar app.run()
-# Para testar localmente sem Gunicorn, rode: FLASK_APP=app.py flask run
-
+    
+if __name__ == '__main__':
+    init_db()
+    app.run(debug=True)
+    
