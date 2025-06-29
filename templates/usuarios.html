@@ -15,7 +15,28 @@
         <p style="color:red;">{{ erro }}</p>
     {% endif %}
 
+    {% if atual == 'admin' %}
+        <h2>Lista completa de administradores:</h2>
+        <ul>
+        {% for u in usuarios %}
+            <li>{{ u }}</li>
+        {% endfor %}
+        </ul>
+    {% else %}
+        <h2>Usuários disponíveis:</h2>
+        <ul>
+        {% for u in usuarios %}
+            {% if u == atual %}
+                <li>{{ u }} — Tempo de login: <span id="tempo_sessao"></span></li>
+            {% else %}
+                <li>{{ u }}</li>
+            {% endif %}
+        {% endfor %}
+        </ul>
+    {% endif %}
+
     <h2>➕ Criar novo admin</h2>
+    {% if atual == 'admin' %}
     <form method="post">
         <input type="hidden" name="acao" value="criar">
         <input type="text" name="novo_usuario" placeholder="Novo usuário" required>
@@ -47,6 +68,28 @@
         </select>
         <button type="submit" style="background: crimson;">Remover</button>
     </form>
+    {% else %}
+        <p>Você não tem permissão para criar, alterar ou remover administradores.</p>
+    {% endif %}
 </div>
+
+<script>
+// Converte o tempo de login ISO enviado pelo backend para tempo decorrido e mostra no span "tempo_sessao"
+{% if login_time %}
+function calculaTempoSessao(loginIso) {
+    const loginTime = new Date(loginIso);
+    const agora = new Date();
+    const diffMs = agora - loginTime; // diferença em ms
+    const diffMin = Math.floor(diffMs / 60000);
+    const diffSeg = Math.floor((diffMs % 60000) / 1000);
+    return diffMin + " min " + diffSeg + " seg";
+}
+
+document.getElementById('tempo_sessao').textContent = calculaTempoSessao("{{ login_time }}");
+setInterval(() => {
+    document.getElementById('tempo_sessao').textContent = calculaTempoSessao("{{ login_time }}");
+}, 1000);
+{% endif %}
+</script>
 </body>
 </html>
