@@ -2,7 +2,8 @@ import json
 import os
 import sqlite3
 import hashlib
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, send_file
+from datetime import datetime
+from flask import Flask, render_template, request, redirect, session, jsonify, send_file
 import requests
 from io import BytesIO
 
@@ -118,6 +119,7 @@ def login():
 
         if user:
             session['usuario'] = usuario
+            session['login_time'] = datetime.now().isoformat()  # salva tempo do login
             return redirect('/dashboard')
         else:
             erro = 'Usuário ou senha inválidos.'
@@ -179,14 +181,21 @@ def usuarios():
 
         elif acao == 'remover':
             usuario = request.form.get('alvo_usuario')
-            if usuario != session['usuario']:  # Não permite excluir o próprio logado
+            if usuario != session['usuario']:
                 c.execute("DELETE FROM usuarios WHERE usuario=?", (usuario,))
                 conn.commit()
 
     c.execute("SELECT usuario FROM usuarios")
     lista_usuarios = [u[0] for u in c.fetchall()]
     conn.close()
-    return render_template('usuarios.html', usuarios=lista_usuarios, atual=session['usuario'])
+
+    atual = session['usuario']
+    login_time = session.get('login_time')
+
+    return render_template('usuarios.html',
+                           usuarios=lista_usuarios,
+                           atual=atual,
+                           login_time=login_time)
 
 @app.route('/add_conteudo')
 @login_required
@@ -264,7 +273,7 @@ def salvar_conteudo():
 
     sinopse = dados.get('overview', '')
     banner = dados.get('backdrop_path') or dados.get('poster_path') or ''
-    banner_url = f"/img{banner}" if banner else ''
+    banner_url = f"/img/{banner.lstrip('/')}" if banner else ''
 
     temporadas = None
     if tipo == 'serie':
@@ -361,7 +370,7 @@ def api_series():
         series_list.append({
             "id": s[0],
             "nome": s[1],
-            "banner": f"/img/{s[2]}" if s[2] else "",
+            "banner": s[2] if s[2] else "",
             "genero": s[3],
             "sinopse": s[4],
             "ano": s[5],
@@ -470,7 +479,7 @@ def api_serie_detalhada(serie_id):
     serie_info = {
         "id": serie[0],
         "nome": serie[1],
-        "banner": f"/img/{serie[2]}" if serie[2] else "",
+        "banner": serie[2] if serie[2] else "",
         "genero": serie[3],
         "sinopse": serie[4],
         "ano": serie[5],
@@ -519,4 +528,4 @@ def imagem_episodio(still_path):
 if __name__ == '__main__':
     init_db()
     app.run(debug=True)
-        
+    
