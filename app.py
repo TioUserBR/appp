@@ -1,110 +1,75 @@
-import json
 import os
-import sqlite3
+import json
 import hashlib
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, send_file
 import requests
+from flask import Flask, request, redirect, render_template, session, jsonify, send_file
+from flask_sqlalchemy import SQLAlchemy
 from io import BytesIO
 
 app = Flask(__name__)
-app.secret_key = 'flavin'  # Troque por algo mais seguro
+app.secret_key = 'flavin'
 
-# Inicializa banco de dados
-def init_db():
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
+# Configuração do banco PostgreSQL
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", "postgresql://useriste:9ylsskEKumh0EAk62o4sjJs98Ukcfog2@dpg-d1g9mn2li9vc73adief0-a/dbsite_nmqc")
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-    # Usuários
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario TEXT UNIQUE,
-            senha TEXT
-        )
-    ''')
+db = SQLAlchemy(app)
 
-    # Conteúdos (filmes e séries)
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS conteudos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            titulo TEXT,
-            ano INTEGER,
-            genero TEXT,
-            sinopse TEXT,
-            banner TEXT,
-            tipo TEXT,
-            temporadas INTEGER DEFAULT 0
-        )
-    ''')
+# Modelos
+class Usuario(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    usuario = db.Column(db.String(80), unique=True, nullable=False)
+    senha = db.Column(db.String(256), nullable=False)
 
-    # Temporadas
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS temporadas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            serie_id INTEGER,
-            numero INTEGER,
-            FOREIGN KEY (serie_id) REFERENCES conteudos(id) ON DELETE CASCADE
-        )
-    ''')
+class Conteudo(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    titulo = db.Column(db.String(200))
+    ano = db.Column(db.Integer)
+    genero = db.Column(db.String(300))
+    sinopse = db.Column(db.Text)
+    banner = db.Column(db.String(300))
+    tipo = db.Column(db.String(20))  # filme ou serie
+    temporadas = db.Column(db.Integer, default=0)
 
-    # Episódios
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS episodios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            temporada_id INTEGER,
-            numero INTEGER,
-            nome TEXT,
-            sinopse TEXT,
-            capa TEXT,
-            FOREIGN KEY (temporada_id) REFERENCES temporadas(id) ON DELETE CASCADE
-        )
-    ''')
+class Temporada(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    serie_id = db.Column(db.Integer, db.ForeignKey('conteudo.id', ondelete='CASCADE'))
+    numero = db.Column(db.Integer)
 
-    senha_hash = hashlib.sha256('admin123'.encode()).hexdigest()
-    c.execute("SELECT * FROM usuarios WHERE usuario = 'admin'")
-    if not c.fetchone():
-        c.execute("INSERT INTO usuarios (usuario, senha) VALUES (?, ?)", ('admin', senha_hash))
+class Episodio(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    temporada_id = db.Column(db.Integer, db.ForeignKey('temporada.id', ondelete='CASCADE'))
+    numero = db.Column(db.Integer)
+    nome = db.Column(db.String(200))
+    sinopse = db.Column(db.Text)
+    capa = db.Column(db.String(200))
 
-    conn.commit()
-    conn.close()
-
-# Caminho para salvar a API KEY
+# Utils
 CONFIG_FILE = 'config.json'
 
 def salvar_tmdb_key(key):
-    config = {"tmdb_api_key": key}
     with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f)
+        json.dump({"tmdb_api_key": key}, f)
 
 def carregar_tmdb_key():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE) as f:
-            config = json.load(f)
-            return config.get('tmdb_api_key')
+            return json.load(f).get('tmdb_api_key')
     return ""
 
-# Verifica se está logado
+# Decorador de login
 def login_required(func):
+    from functools import wraps
+    @wraps(func)
     def wrapper(*args, **kwargs):
         if 'usuario' not in session:
             return redirect('/login')
         return func(*args, **kwargs)
-    wrapper.__name__ = func.__name__
     return wrapper
-
-@app.route('/img/<path:poster_path>')
-def obter_imagem_tmdb(poster_path):
-    url = f'https://image.tmdb.org/t/p/w500/{poster_path}'
-    response = requests.get(url)
-    if response.status_code == 200:
-        return send_file(BytesIO(response.content), mimetype='image/jpeg')
-    return "Imagem não encontrada", 404
 
 @app.route('/')
 def home():
-    if 'usuario' in session:
-        return redirect('/dashboard')
-    return redirect('/login')
+    return redirect('/dashboard') if 'usuario' in session else redirect('/login')
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -116,19 +81,12 @@ def login():
         usuario = request.form['usuario']
         senha = request.form['senha']
         senha_hash = hashlib.sha256(senha.encode()).hexdigest()
-
-        conn = sqlite3.connect('database.db')
-        c = conn.cursor()
-        c.execute("SELECT * FROM usuarios WHERE usuario=? AND senha=?", (usuario, senha_hash))
-        user = c.fetchone()
-        conn.close()
-
+        user = Usuario.query.filter_by(usuario=usuario, senha=senha_hash).first()
         if user:
             session['usuario'] = usuario
             return redirect('/dashboard')
         else:
             erro = 'Usuário ou senha inválidos.'
-
     return render_template('login.html', erro=erro)
 
 @app.route('/logout')
@@ -139,407 +97,169 @@ def logout():
 @app.route('/dashboard', methods=['GET', 'POST'])
 @login_required
 def dashboard():
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-
-    # Estatísticas
-    c.execute("SELECT COUNT(*) FROM conteudos WHERE tipo='filme'")
-    qtd_filmes = c.fetchone()[0]
-
-    c.execute("SELECT COUNT(*) FROM conteudos WHERE tipo='serie'")
-    qtd_series = c.fetchone()[0]
-
-    # Salvar TMDb Key
     if request.method == 'POST' and 'tmdb_key' in request.form:
-        key = request.form['tmdb_key']
-        salvar_tmdb_key(key)
+        salvar_tmdb_key(request.form['tmdb_key'])
         return redirect('/dashboard')
 
-    tmdb_key = carregar_tmdb_key()
-
-    conn.close()
     return render_template('dashboard.html',
-                           qtd_filmes=qtd_filmes,
-                           qtd_series=qtd_series,
-                           tmdb_key=tmdb_key)
-
-@app.route('/usuarios', methods=['GET', 'POST'])
-@login_required
-def usuarios():
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-
-    if request.method == 'POST':
-        acao = request.form.get('acao')
-
-        if acao == 'criar':
-            novo_usuario = request.form.get('novo_usuario')
-            nova_senha = hashlib.sha256(request.form.get('nova_senha').encode()).hexdigest()
-            try:
-                c.execute("INSERT INTO usuarios (usuario, senha) VALUES (?, ?)", (novo_usuario, nova_senha))
-                conn.commit()
-            except sqlite3.IntegrityError:
-                return render_template('usuarios.html', erro='Usuário já existe!', usuarios=[], atual=session['usuario'])
-
-        elif acao == 'alterar':
-            usuario = request.form.get('alvo_usuario')
-            nova_senha = hashlib.sha256(request.form.get('nova_senha').encode()).hexdigest()
-            c.execute("UPDATE usuarios SET senha=? WHERE usuario=?", (nova_senha, usuario))
-            conn.commit()
-
-        elif acao == 'remover':
-            usuario = request.form.get('alvo_usuario')
-            if usuario != session['usuario']:  # Não permite excluir o próprio logado
-                c.execute("DELETE FROM usuarios WHERE usuario=?", (usuario,))
-                conn.commit()
-
-    c.execute("SELECT usuario FROM usuarios")
-    lista_usuarios = [u[0] for u in c.fetchall()]
-    conn.close()
-    return render_template('usuarios.html', usuarios=lista_usuarios, atual=session['usuario'])
+        qtd_filmes=Conteudo.query.filter_by(tipo='filme').count(),
+        qtd_series=Conteudo.query.filter_by(tipo='serie').count(),
+        tmdb_key=carregar_tmdb_key()
+    )
 
 @app.route('/add_conteudo')
 @login_required
 def add_conteudo():
-    tmdb_key = carregar_tmdb_key()
-    if not tmdb_key:
-        return redirect('/dashboard')
     return render_template('pesquisa.html')
 
 @app.route('/pesquisar_conteudo', methods=['POST'])
 @login_required
 def pesquisar_conteudo():
-    tmdb_key = carregar_tmdb_key()
-    if not tmdb_key:
-        return {"error": "API Key não configurada"}, 400
-
     query = request.form.get('query')
-    tipo = request.form.get('tipo')  # filme ou serie
-    if not query:
-        return {"error": "Termo de busca vazio"}, 400
+    tipo = request.form.get('tipo')
+    tmdb_key = carregar_tmdb_key()
+
     if tipo not in ['filme', 'serie']:
-        return {"error": "Tipo inválido"}, 400
+        return {"erro": "Tipo inválido"}, 400
 
-    url_base = "https://api.themoviedb.org/3/search/"
-    if tipo == 'filme':
-        url = f"{url_base}movie"
-    else:
-        url = f"{url_base}tv"
-
-    params = {
-        "api_key": tmdb_key,
-        "language": "pt-BR",
-        "query": query,
-        "page": 1,
-        "include_adult": False
-    }
-    response = requests.get(url, params=params)
-    data = response.json()
-
-    return data  # retorna JSON para o front (ajax)
+    url = f"https://api.themoviedb.org/3/search/{'movie' if tipo == 'filme' else 'tv'}"
+    r = requests.get(url, params={"api_key": tmdb_key, "language": "pt-BR", "query": query}).json()
+    return r
 
 @app.route('/salvar_conteudo', methods=['POST'])
 @login_required
 def salvar_conteudo():
-    tmdb_key = carregar_tmdb_key()
-    if not tmdb_key:
-        return {"erro": "API Key não configurada"}, 400
-
-    titulo = request.form.get('titulo')
-    ano = request.form.get('ano')
-    tipo = request.form.get('tipo')
     tmdb_id = request.form.get('tmdb_id')
+    tipo = request.form.get('tipo')
+    tmdb_key = carregar_tmdb_key()
 
-    if tipo not in ['filme', 'serie']:
-        return {"erro": "Tipo inválido"}, 400
     if not tmdb_id:
-        return {"erro": "ID TMDb ausente"}, 400
+        return "ID inválido", 400
 
-    url_base = "https://api.themoviedb.org/3"
-    if tipo == 'filme':
-        url = f"{url_base}/movie/{tmdb_id}"
-    else:
-        url = f"{url_base}/tv/{tmdb_id}"
+    url = f"https://api.themoviedb.org/3/{'movie' if tipo == 'filme' else 'tv'}/{tmdb_id}"
+    data = requests.get(url, params={"api_key": tmdb_key, "language": "pt-BR"}).json()
 
-    params = {
-        "api_key": tmdb_key,
-        "language": "pt-BR"
-    }
-    resp = requests.get(url, params=params)
-    if resp.status_code != 200:
-        return {"erro": "Falha ao obter dados do TMDb"}, 500
-    dados = resp.json()
-
-    generos_nomes = ', '.join([g['name'] for g in dados.get('genres', [])])
-
-    sinopse = dados.get('overview', '')
-    banner = dados.get('backdrop_path') or dados.get('poster_path') or ''
-    banner_url = f"/img{banner}" if banner else ''
-
-    temporadas = None
-    if tipo == 'serie':
-        temporadas = dados.get('number_of_seasons', 0)
-
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO conteudos (titulo, ano, genero, sinopse, banner, tipo, temporadas)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        titulo,
-        ano,
-        generos_nomes,
-        sinopse,
-        banner_url,
-        tipo,
-        temporadas
-    ))
-    conn.commit()
-    conn.close()
-
+    conteudo = Conteudo(
+        titulo=data.get('title') or data.get('name'),
+        ano=int((data.get('release_date') or data.get('first_air_date') or '0')[:4]),
+        genero=', '.join([g['name'] for g in data.get('genres', [])]),
+        sinopse=data.get('overview'),
+        banner=data.get('backdrop_path') or data.get('poster_path'),
+        tipo=tipo,
+        temporadas=data.get('number_of_seasons') if tipo == 'serie' else 0
+    )
+    db.session.add(conteudo)
+    db.session.commit()
     return redirect('/dashboard')
-
-@app.route('/api/filmes', methods=['GET'])
-@login_required
-def api_filmes():
-    page = request.args.get('page', default=1, type=int)
-    limit = 50
-    offset = (page - 1) * limit
-
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-
-    c.execute("SELECT COUNT(*) FROM conteudos WHERE tipo='filme'")
-    total = c.fetchone()[0]
-
-    c.execute('''
-        SELECT titulo, banner, banner, genero, ano, sinopse
-        FROM conteudos
-        WHERE tipo = 'filme'
-        ORDER BY id DESC
-        LIMIT ? OFFSET ?
-    ''', (limit, offset))
-
-    filmes = c.fetchall()
-    conn.close()
-
-    lista = []
-    for f in filmes:
-        lista.append({
-            "nome": f[0],
-            "capa": f[1],
-            "banner": f[2],
-            "genero": f[3],
-            "ano": f[4],
-            "sinopse": f[5]
-        })
-
-    total_pages = (total + limit - 1) // limit
-    next_page = page + 1 if page < total_pages else None
-
-    return jsonify({
-        "pagina_atual": page,
-        "total_paginas": total_pages,
-        "total_filmes": total,
-        "filmes": lista,
-        "proxima_pagina": f"/api/filmes?page={next_page}" if next_page else None
-    })
-
-@app.route('/api/series', methods=['GET'])
-@login_required
-def api_series():
-    page = request.args.get('page', default=1, type=int)
-    limit = 50
-    offset = (page - 1) * limit
-
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-
-    # Total de séries
-    c.execute("SELECT COUNT(*) FROM conteudos WHERE tipo='serie'")
-    total = c.fetchone()[0]
-
-    # Buscar séries com todos os campos necessários
-    c.execute('''
-        SELECT id, titulo, banner, genero, sinopse, ano, temporadas
-        FROM conteudos
-        WHERE tipo='serie'
-        ORDER BY id DESC
-        LIMIT ? OFFSET ?
-    ''', (limit, offset))
-    series = c.fetchall()
-    conn.close()
-
-    series_list = []
-    for s in series:
-        series_list.append({
-            "id": s[0],
-            "nome": s[1],
-            "banner": f"/img/{s[2]}",
-            "genero": s[3],
-            "sinopse": s[4],
-            "ano": s[5],
-            "temporadas": s[6] if s[6] else 0
-        })
-
-    total_pages = (total + limit - 1) // limit
-    next_page = page + 1 if page < total_pages else None
-
-    return jsonify({
-        "pagina_atual": page,
-        "total_paginas": total_pages,
-        "total_series": total,
-        "series": series_list,
-        "proxima_pagina": f"/api/series?page={next_page}" if next_page else None
-    })
 
 @app.route('/add_temporadas', methods=['GET', 'POST'])
 @login_required
 def add_temporadas():
-    conn = sqlite3.connect('database.db')
-    conn.execute('PRAGMA foreign_keys = ON')
-    c = conn.cursor()
-
     if request.method == 'POST':
         serie_id = request.form.get('serie_id')
+        conteudo = Conteudo.query.get(serie_id)
         tmdb_key = carregar_tmdb_key()
 
-        # Buscar título
-        c.execute("SELECT titulo FROM conteudos WHERE id=? AND tipo='serie'", (serie_id,))
-        row = c.fetchone()
-        if not row:
-            conn.close()
-            return "Série não encontrada", 404
+        search = requests.get("https://api.themoviedb.org/3/search/tv", params={
+            "api_key": tmdb_key,
+            "language": "pt-BR",
+            "query": conteudo.titulo
+        }).json()
 
-        titulo = row[0]
+        tmdb_id = search.get("results", [{}])[0].get("id")
+        detalhes = requests.get(f"https://api.themoviedb.org/3/tv/{tmdb_id}", params={
+            "api_key": tmdb_key, "language": "pt-BR"
+        }).json()
 
-        # Buscar ID do TMDb
-        url_busca = "https://api.themoviedb.org/3/search/tv"
-        params = {"api_key": tmdb_key, "language": "pt-BR", "query": titulo}
-        r = requests.get(url_busca, params=params).json()
-        resultados = r.get("results", [])
-        if not resultados:
-            conn.close()
-            return "Série não encontrada no TMDb", 404
+        for t in range(1, detalhes.get("number_of_seasons", 0) + 1):
+            temp = Temporada(serie_id=serie_id, numero=t)
+            db.session.add(temp)
+            db.session.flush()
 
-        tmdb_id = resultados[0]["id"]
-
-        # Buscar número de temporadas
-        detalhes = requests.get(
-            f"https://api.themoviedb.org/3/tv/{tmdb_id}",
-            params={"api_key": tmdb_key, "language": "pt-BR"}
-        ).json()
-
-        num_temporadas = detalhes.get("number_of_seasons", 0)
-
-        for temporada in range(1, num_temporadas + 1):
-            try:
-                c.execute("INSERT INTO temporadas (serie_id, numero) VALUES (?, ?)", (serie_id, temporada))
-                temporada_id = c.lastrowid
-
-                # Buscar episódios
-                eps = requests.get(
-                    f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{temporada}",
-                    params={"api_key": tmdb_key, "language": "pt-BR"}
-                ).json()
-
-                for ep in eps.get("episodes", []):
-                    c.execute('''
-                        INSERT INTO episodios (temporada_id, numero, nome, sinopse, capa)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (
-                        temporada_id,
-                        ep.get("episode_number"),
-                        ep.get("name"),
-                        ep.get("overview"),
-                        ep.get("still_path") or ''
-                    ))
-            except sqlite3.OperationalError as e:
-                conn.rollback()
-                conn.close()
-                return f"Erro ao inserir temporada {temporada}: {e}", 500
-
-        c.execute("UPDATE conteudos SET temporadas=? WHERE id=?", (num_temporadas, serie_id))
-        conn.commit()
-        conn.close()
+            eps = requests.get(f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{t}", params={
+                "api_key": tmdb_key, "language": "pt-BR"
+            }).json()
+            for ep in eps.get('episodes', []):
+                db.session.add(Episodio(
+                    temporada_id=temp.id,
+                    numero=ep.get("episode_number"),
+                    nome=ep.get("name"),
+                    sinopse=ep.get("overview"),
+                    capa=ep.get("still_path") or ''
+                ))
+        db.session.commit()
         return redirect('/dashboard')
 
-    # Listar séries
-    c.execute("SELECT id, titulo FROM conteudos WHERE tipo='serie'")
-    series = c.fetchall()
-    conn.close()
+    series = Conteudo.query.filter_by(tipo='serie').all()
     return render_template('add_temporadas.html', series=series)
 
-@app.route('/api/serie/<int:serie_id>', methods=['GET'])
+@app.route('/api/filmes')
+@login_required
+def api_filmes():
+    filmes = Conteudo.query.filter_by(tipo='filme').all()
+    return jsonify([{
+        "nome": f.titulo,
+        "capa": f"/img/{f.banner}",
+        "banner": f"/img/{f.banner}",
+        "genero": f.genero,
+        "ano": f.ano,
+        "sinopse": f.sinopse
+    } for f in filmes])
+
+@app.route('/api/series')
+@login_required
+def api_series():
+    series = Conteudo.query.filter_by(tipo='serie').all()
+    return jsonify([{
+        "id": s.id,
+        "nome": s.titulo,
+        "banner": f"/img/{s.banner}",
+        "genero": s.genero,
+        "sinopse": s.sinopse,
+        "ano": s.ano,
+        "temporadas": s.temporadas
+    } for s in series])
+
+@app.route('/api/serie/<int:serie_id>')
 @login_required
 def api_serie_detalhada(serie_id):
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-
-    # Busca os dados da série
-    c.execute('''
-        SELECT id, titulo, banner, genero, sinopse, ano, temporadas
-        FROM conteudos
-        WHERE id = ? AND tipo = 'serie'
-    ''', (serie_id,))
-    serie = c.fetchone()
-
-    if not serie:
-        conn.close()
+    conteudo = Conteudo.query.get(serie_id)
+    if not conteudo or conteudo.tipo != 'serie':
         return jsonify({"erro": "Série não encontrada"}), 404
 
-    serie_info = {
-        "id": serie[0],
-        "nome": serie[1],
-        "banner": f"/img/{serie[2]}",
-        "genero": serie[3],
-        "sinopse": serie[4],
-        "ano": serie[5],
-        "temporadas": []
-    }
-
-    # Busca todas as temporadas da série
-    c.execute("SELECT id, numero FROM temporadas WHERE serie_id = ? ORDER BY numero ASC", (serie_id,))
-    temporadas = c.fetchall()
-
-    for temp in temporadas:
-        temporada_id = temp[0]
-        numero_temp = temp[1]
-
-        # Busca episódios da temporada
-        c.execute("""
-            SELECT numero, nome, sinopse 
-            FROM episodios 
-            WHERE temporada_id = ? 
-            ORDER BY numero ASC
-        """, (temporada_id,))
-        episodios = c.fetchall()
-
-        episodios_list = []
-        for ep in episodios:
-            episodios_list.append({
-                "Episodios": ep[0],
-                "nome": ep[1],
-                "sinopse": ep[2]
-            })
-
-        serie_info["temporadas"].append({
-            "Temporada": numero_temp,
-            "episodios": episodios_list
+    temporadas_data = []
+    for temp in Temporada.query.filter_by(serie_id=serie_id).all():
+        episodios_data = [{
+            "numero": ep.numero,
+            "nome": ep.nome,
+            "sinopse": ep.sinopse,
+            "capa": f"/img/{ep.capa}" if ep.capa else ""
+        } for ep in Episodio.query.filter_by(temporada_id=temp.id).all()]
+        temporadas_data.append({
+            "temporada": temp.numero,
+            "episodios": episodios_data
         })
 
-    conn.close()
-    return jsonify(serie_info)
- 
-@app.route('/img_eps/<path:still_path>')
-def imagem_episodio(still_path):
-    url = f'https://image.tmdb.org/t/p/w500/{still_path}'
-    response = requests.get(url)
-    if response.status_code == 200:
-        return send_file(BytesIO(response.content), mimetype='image/jpeg')
+    return jsonify({
+        "id": conteudo.id,
+        "nome": conteudo.titulo,
+        "banner": f"/img/{conteudo.banner}",
+        "genero": conteudo.genero,
+        "ano": conteudo.ano,
+        "sinopse": conteudo.sinopse,
+        "temporadas": temporadas_data
+    })
+
+@app.route('/img/<path:path>')
+def img(path):
+    url = f'https://image.tmdb.org/t/p/w500/{path}'
+    r = requests.get(url)
+    if r.status_code == 200:
+        return send_file(BytesIO(r.content), mimetype='image/jpeg')
     return "Imagem não encontrada", 404
-    
+
 if __name__ == '__main__':
-    init_db()
+    with app.app_context():
+        db.create_all()
     app.run(debug=True)
     
