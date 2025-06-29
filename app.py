@@ -9,12 +9,10 @@ from io import BytesIO
 app = Flask(__name__)
 app.secret_key = 'flavin'  # Troque por algo mais seguro
 
-# Inicializa banco de dados
 def init_db():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
 
-    # Usuários
     c.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,7 +21,6 @@ def init_db():
         )
     ''')
 
-    # Conteúdos (filmes e séries)
     c.execute('''
         CREATE TABLE IF NOT EXISTS conteudos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,7 +34,6 @@ def init_db():
         )
     ''')
 
-    # Temporadas
     c.execute('''
         CREATE TABLE IF NOT EXISTS temporadas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,7 +43,6 @@ def init_db():
         )
     ''')
 
-    # Episódios
     c.execute('''
         CREATE TABLE IF NOT EXISTS episodios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,7 +63,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Caminho para salvar a API KEY
 CONFIG_FILE = 'config.json'
 
 def salvar_tmdb_key(key):
@@ -83,7 +77,6 @@ def carregar_tmdb_key():
             return config.get('tmdb_api_key')
     return ""
 
-# Verifica se está logado
 def login_required(func):
     def wrapper(*args, **kwargs):
         if 'usuario' not in session:
@@ -142,21 +135,18 @@ def dashboard():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
 
-    # Estatísticas
     c.execute("SELECT COUNT(*) FROM conteudos WHERE tipo='filme'")
     qtd_filmes = c.fetchone()[0]
 
     c.execute("SELECT COUNT(*) FROM conteudos WHERE tipo='serie'")
     qtd_series = c.fetchone()[0]
 
-    # Salvar TMDb Key
     if request.method == 'POST' and 'tmdb_key' in request.form:
         key = request.form['tmdb_key']
         salvar_tmdb_key(key)
         return redirect('/dashboard')
 
     tmdb_key = carregar_tmdb_key()
-
     conn.close()
     return render_template('dashboard.html',
                            qtd_filmes=qtd_filmes,
@@ -236,7 +226,7 @@ def pesquisar_conteudo():
     response = requests.get(url, params=params)
     data = response.json()
 
-    return data  # retorna JSON para o front (ajax)
+    return data
 
 @app.route('/salvar_conteudo', methods=['POST'])
 @login_required
@@ -300,7 +290,6 @@ def salvar_conteudo():
     return redirect('/dashboard')
 
 @app.route('/api/filmes', methods=['GET'])
-@login_required
 def api_filmes():
     page = request.args.get('page', default=1, type=int)
     limit = 50
@@ -346,7 +335,6 @@ def api_filmes():
     })
 
 @app.route('/api/series', methods=['GET'])
-@login_required
 def api_series():
     page = request.args.get('page', default=1, type=int)
     limit = 50
@@ -355,11 +343,9 @@ def api_series():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
 
-    # Total de séries
     c.execute("SELECT COUNT(*) FROM conteudos WHERE tipo='serie'")
     total = c.fetchone()[0]
 
-    # Buscar séries com todos os campos necessários
     c.execute('''
         SELECT id, titulo, banner, genero, sinopse, ano, temporadas
         FROM conteudos
@@ -375,7 +361,7 @@ def api_series():
         series_list.append({
             "id": s[0],
             "nome": s[1],
-            "banner": f"/img/{s[2]}",
+            "banner": f"/img/{s[2]}" if s[2] else "",
             "genero": s[3],
             "sinopse": s[4],
             "ano": s[5],
@@ -404,7 +390,6 @@ def add_temporadas():
         serie_id = request.form.get('serie_id')
         tmdb_key = carregar_tmdb_key()
 
-        # Buscar título
         c.execute("SELECT titulo FROM conteudos WHERE id=? AND tipo='serie'", (serie_id,))
         row = c.fetchone()
         if not row:
@@ -413,7 +398,6 @@ def add_temporadas():
 
         titulo = row[0]
 
-        # Buscar ID do TMDb
         url_busca = "https://api.themoviedb.org/3/search/tv"
         params = {"api_key": tmdb_key, "language": "pt-BR", "query": titulo}
         r = requests.get(url_busca, params=params).json()
@@ -424,7 +408,6 @@ def add_temporadas():
 
         tmdb_id = resultados[0]["id"]
 
-        # Buscar número de temporadas
         detalhes = requests.get(
             f"https://api.themoviedb.org/3/tv/{tmdb_id}",
             params={"api_key": tmdb_key, "language": "pt-BR"}
@@ -437,7 +420,6 @@ def add_temporadas():
                 c.execute("INSERT INTO temporadas (serie_id, numero) VALUES (?, ?)", (serie_id, temporada))
                 temporada_id = c.lastrowid
 
-                # Buscar episódios
                 eps = requests.get(
                     f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{temporada}",
                     params={"api_key": tmdb_key, "language": "pt-BR"}
@@ -464,19 +446,16 @@ def add_temporadas():
         conn.close()
         return redirect('/dashboard')
 
-    # Listar séries
     c.execute("SELECT id, titulo FROM conteudos WHERE tipo='serie'")
     series = c.fetchall()
     conn.close()
     return render_template('add_temporadas.html', series=series)
 
 @app.route('/api/serie/<int:serie_id>', methods=['GET'])
-@login_required
 def api_serie_detalhada(serie_id):
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
 
-    # Busca os dados da série
     c.execute('''
         SELECT id, titulo, banner, genero, sinopse, ano, temporadas
         FROM conteudos
@@ -491,14 +470,13 @@ def api_serie_detalhada(serie_id):
     serie_info = {
         "id": serie[0],
         "nome": serie[1],
-        "banner": f"/img/{serie[2]}",
+        "banner": f"/img/{serie[2]}" if serie[2] else "",
         "genero": serie[3],
         "sinopse": serie[4],
         "ano": serie[5],
         "temporadas": []
     }
 
-    # Busca todas as temporadas da série
     c.execute("SELECT id, numero FROM temporadas WHERE serie_id = ? ORDER BY numero ASC", (serie_id,))
     temporadas = c.fetchall()
 
@@ -506,7 +484,6 @@ def api_serie_detalhada(serie_id):
         temporada_id = temp[0]
         numero_temp = temp[1]
 
-        # Busca episódios da temporada
         c.execute("""
             SELECT numero, nome, sinopse 
             FROM episodios 
@@ -518,19 +495,19 @@ def api_serie_detalhada(serie_id):
         episodios_list = []
         for ep in episodios:
             episodios_list.append({
-                "Episodios": ep[0],
+                "episodio": ep[0],
                 "nome": ep[1],
                 "sinopse": ep[2]
             })
 
         serie_info["temporadas"].append({
-            "Temporada": numero_temp,
+            "temporada": numero_temp,
             "episodios": episodios_list
         })
 
     conn.close()
     return jsonify(serie_info)
- 
+
 @app.route('/img_eps/<path:still_path>')
 def imagem_episodio(still_path):
     url = f'https://image.tmdb.org/t/p/w500/{still_path}'
@@ -538,8 +515,8 @@ def imagem_episodio(still_path):
     if response.status_code == 200:
         return send_file(BytesIO(response.content), mimetype='image/jpeg')
     return "Imagem não encontrada", 404
-    
+
 if __name__ == '__main__':
     init_db()
     app.run(debug=True)
-    
+        
